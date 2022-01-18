@@ -44,7 +44,10 @@ def main(argv=None):  # pylint: disable=inconsistent-return-statements
         if any(line.startswith("[tool.poetry]") for line in lines):
             with convert_poetry_to_requirements(pyproject_toml_filepath) as tmp_requirements:
                 return call_safety_check([tmp_requirements.name], parsed_args.ignore, parsed_args.full_report, args_rest)
-        parser.error("Unsupported build tool: this pre-commit hook currently only handles pyproject.toml with Poetry")
+        elif any(line.startswith("[tool.pdm]") for line in lines):
+            with convert_pdm_to_requirements(pyproject_toml_filepath) as tmp_requirements:
+                return call_safety_check([tmp_requirements.name], parsed_args.ignore, parsed_args.full_report, args_rest)
+        parser.error("Unsupported build tool: this pre-commit hook currently only handles pyproject.toml with Poetry and PDM")
     else:
         parser.error("Unsupported mix of pyproject.toml & requirements files found")
 
@@ -79,6 +82,22 @@ def convert_poetry_to_requirements(pyproject_toml_filepath):  # Sad function nam
             os.remove(ntf.name)
 
 
+@contextmanager
+def convert_pdm_to_requirements(pyproject_toml_filepath):  # Sad function name :(
+    pdm_cmd_path = which("pdm")
+    if not pdm_cmd_path:
+        pdm_cmd_path = os.path.join(os.environ.get("HOME", ""), ".pdm", "bin", "pdm")
+    # Always passing delete=False to NamedTemporaryFile in order to avoid permission errors on Windows:
+    with NamedTemporaryFile(delete=False) as ntf:
+        try:
+            # Placing ourselves in the pyproject.toml parent directory:
+            with chdir(pyproject_toml_filepath.parent):
+                check_call([pdm_cmd_path, "export", "--dev", "--format", "requirements", "--output", ntf.name])
+            yield ntf
+        finally:  # Manually deleting temporary file:
+            os.remove(ntf.name)
+
+            
 @contextmanager
 def chdir(path):
     """
